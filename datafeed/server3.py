@@ -143,7 +143,7 @@ def order_book(orders, book, stock_name):
 
 def generate_csv():
     """ Generate a CSV of order history. """
-    with open('test.csv', 'wb') as f:
+    with open('test.csv', 'w', newline='') as f:
         writer = csv.writer(f)
         for t, stock, side, order, size in orders(market()):
             if t > MARKET_OPEN + SIM_LENGTH:
@@ -236,13 +236,33 @@ class App(object):
     """ The trading game server application. """
 
     def __init__(self):
-        self._book_1    = dict()
-        self._book_2    = dict()
-        self._data_1    = order_book(read_csv(), self._book_1, 'ABC')
-        self._data_2    = order_book(read_csv(), self._book_2, 'DEF')
+        self._book_1 = dict()
+        self._book_2 = dict()
+        self._initialize_data()
         self._rt_start = datetime.now()
-        self._sim_start, _, _  = next(self._data_1)
+        self._sim_start = self._initialize_sim_start()
         self.read_10_first_lines()
+
+    def _initialize_data(self):
+        self._data_1 = order_book(read_csv(), self._book_1, 'ABC')
+        self._data_2 = order_book(read_csv(), self._book_2, 'DEF')
+
+    def _initialize_sim_start(self):
+        try:
+            sim_start, _, _ = next(self._data_1)
+            return sim_start
+        except StopIteration:
+            print("No more data available to initialize sim start. Reinitializing data.")
+            self._generate_and_initialize_data()
+            try:
+                sim_start, _, _ = next(self._data_1)
+                return sim_start
+            except StopIteration:
+                raise Exception("Unable to initialize simulation start due to lack of data.")
+
+    def _generate_and_initialize_data(self):
+        generate_csv()
+        self._initialize_data()
 
     @property
     def _current_book_1(self):
@@ -263,25 +283,29 @@ class App(object):
                 yield t, bids, asks
 
     def read_10_first_lines(self):
-            for _ in iter(range(10)):
+        try:
+            for _ in range(10):
                 next(self._data_1)
                 next(self._data_2)
+        except StopIteration:
+            print("No more data available to read 10 first lines. Reinitializing data.")
+            self._generate_and_initialize_data()
 
     @route('/query')
     def handle_query(self, x):
-        """ Takes no arguments, and yields the current top of the book;  the
+        """ Takes no arguments, and yields the current top of the book; the
             best bid and ask and their sizes
         """
         try:
             t1, bids1, asks1 = next(self._current_book_1)
             t2, bids2, asks2 = next(self._current_book_2)
-        except Exception as e:
-            print ("error getting stocks...reinitalizing app")
+        except StopIteration:
+            print("Error getting stocks... reinitializing app")
             self.__init__()
             t1, bids1, asks1 = next(self._current_book_1)
             t2, bids2, asks2 = next(self._current_book_2)
         t = t1 if t1 > t2 else t2
-        print ('Query received @ t%s' % t)
+        print('Query received @ t%s' % t)
         return [{
             'id': x and x.get('id', None),
             'stock': 'ABC',
@@ -294,8 +318,7 @@ class App(object):
                 'price': asks1[0][0],
                 'size': asks1[0][1]
             }
-        },
-        {
+        }, {
             'id': x and x.get('id', None),
             'stock': 'DEF',
             'timestamp': str(t),
@@ -315,6 +338,6 @@ class App(object):
 
 if __name__ == '__main__':
     if not os.path.isfile('test.csv'):
-        print ("No data found, generating...")
+        print("No data found, generating...")
         generate_csv()
     run(App())
